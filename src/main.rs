@@ -4,13 +4,13 @@ mod cor20;
 use core::mem::size_of;
 use std::borrow::Cow;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::mem::{MaybeUninit, size_of_val, transmute};
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::mem::{size_of_val, transmute};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use clap::Parser;
 use crate::cor20::{Cor20Header, MetadataHeader, StreamHeader, StreamSize, SharpTilde, PartialRowCountCollection, PredefinedRowCollection, Module};
-use crate::model::{CoffRawSectionTableEntry, DataDirectory, NtAdditionalRawCoffHeaderField, PortableExecutableFormat, RawCoffField, RawCoffHeader, UsualDataDirectory, RawDosHeader, StandardCoffField, ClrMetadata, ImageDataDirectory};
+use crate::model::{CoffRawSectionTableEntry, NtAdditionalRawCoffHeaderField, PortableExecutableFormat, RawCoffField, RawCoffHeader, UsualDataDirectory, RawDosHeader, ClrMetadata};
 
 #[derive(Parser)]
 struct Decode {
@@ -63,7 +63,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
             return Err(Cow::Owned(format!("too short input for COFF header: only {read_size} bytes were read")))
         }
 
-        let mut raw_coff_header: RawCoffHeader = RawCoffHeader::new(buf);
+        let raw_coff_header: RawCoffHeader = RawCoffHeader::new(buf);
         println!("[DEBUG] [COFF] {raw_coff_header:?}");
 
         const PE_MAGIC: u32 = 0x50450000;
@@ -129,9 +129,9 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
             raw_data_directory
         };
 
-        let dd = dd.bake().map_err(|e| Cow::Owned(format!("baking of DataDirectory was failed; invalid padding: {e}")))?;
+        
 
-        dd
+        dd.bake().map_err(|e| Cow::Owned(format!("baking of DataDirectory was failed; invalid padding: {e}")))?
     };
 
     println!("{dd:?}");
@@ -238,7 +238,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                 u16::from_le_bytes(buf[2..4].try_into().unwrap()),
             );
 
-            let header = MetadataHeader {
+            let _header = MetadataHeader {
                 signature,
                 major,
                 minor,
@@ -264,7 +264,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
                 let mut temporal_buffer = [0; 32];
 
-                let backed_up = reader.seek(SeekFrom::Current(0)).expect("failed to get current position");
+                let backed_up = reader.stream_position().expect("failed to get current position");
                 // println!("    current loc: {backed_up:08X}");
 
                 let name = 'find_stream_name: loop {
@@ -275,14 +275,12 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                     if let Some((terminated, _)) = temporal_buffer[0..actual_read_size].iter().enumerate().find(|(_, x)| **x == 0) {
                         let show = &temporal_buffer[0..terminated];
                         // println!("    terminated: {show:?}");
-                        stream_name.extend(
-                            String::from_utf8(show.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name").chars()
-                        );
+                        stream_name.push_str(&String::from_utf8(show.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name"));
 
                         // huh, why did you terminate with weird zero-padding :/
                         let last_non_zero = backed_up as usize + terminated - 1;
                         // println!("    actual end: {last_non_zero:08X}");
-                        let next = if stream_name.bytes().count() % 4 == 0 {
+                        let next = if stream_name.len() % 4 == 0 {
                             // println!("    Four: !!positive");
                             last_non_zero + 5
                         } else {
@@ -300,9 +298,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                             panic!("unexpected EOF: Stream name is not terminated!")
                         }
 
-                        stream_name.extend(
-                            String::from_utf8(temporal_buffer.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name").chars()
-                        );
+                        stream_name.push_str(&String::from_utf8(temporal_buffer.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name"));
                     }
                 };
 
@@ -334,7 +330,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                     ((ctb & (1 << p.table_id())) != 0).then(|| {
                         let mut buf = [0u8; 4];
 
-                        (&mut reader).read_exact(&mut buf).expect("fail");
+                        reader.read_exact(&mut buf).expect("fail");
 
                         u32::from_le_bytes(buf)
                     }).and_then(NonZeroU32::new)
@@ -395,7 +391,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
                 println!("    large: S = {large_string_heap}, G = {large_guid_heap}, B = {large_blob_heap}");
                 let modules: Option<Vec<Module>> = partial_col.module.map(|x| {
-                    let mut vec = Vec::with_capacity(x.get() as usize);
+                    let vec = Vec::with_capacity(x.get() as usize);
 
                     for _ in 0..x.get() {
 

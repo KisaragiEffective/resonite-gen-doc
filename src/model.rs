@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Formatter, Write};
 use std::intrinsics::transmute;
-use std::mem::{MaybeUninit, size_of};
+use std::mem::{size_of};
 use std::num::NonZeroU32;
 use std::str::Utf8Error;
 
@@ -142,7 +142,7 @@ impl RawCoffField {
                     base_of_data: unsafe { self.base_of_data },
                 })
             }
-            _ => return Err(())
+            _ => Err(())
         }
     }
 }
