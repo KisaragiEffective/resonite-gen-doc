@@ -275,7 +275,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                     if let Some((terminated, _)) = temporal_buffer[0..actual_read_size].iter().enumerate().find(|(_, x)| **x == 0) {
                         let show = &temporal_buffer[0..terminated];
                         // println!("    terminated: {show:?}");
-                        stream_name.push_str(&String::from_utf8(show.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name"));
+                        stream_name.push_str(core::str::from_utf8(show).expect("compiler emitted invalid UTF-8 for Stream name"));
 
                         // huh, why did you terminate with weird zero-padding :/
                         let last_non_zero = backed_up as usize + terminated - 1;
