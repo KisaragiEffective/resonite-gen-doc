@@ -238,10 +238,146 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
             reader.read_exact(&mut version).expect("ohhhhh");
             println!("raw buffer: {version:?}");
-            let decoded = String::from_utf8(version).expect("illegal UTF-8 sequence for compiler version was committed by a compiler");
+            let version = String::from_utf8(version).expect("illegal UTF-8 sequence for compiler version was committed by a compiler");
 
-            println!("version information: {decoded}");
+            println!("version information: {version}");
 
+            let mut buf = [0; 4];
+
+            reader.read_exact(&mut buf).expect("failed");
+
+            let (flags, number_of_streams) = (
+                u16::from_le_bytes(buf[0..2].try_into().unwrap()),
+                u16::from_le_bytes(buf[2..4].try_into().unwrap()),
+            );
+
+            let header = MetadataHeader {
+                signature,
+                major,
+                minor,
+                __reserved,
+                version,
+                flags,
+                number_of_streams,
+            };
+
+            #[repr(C)]
+            #[derive(Debug)]
+            struct StreamSize {
+                offset_from_metadata_header: u32,
+                size: u32,
+            }
+
+            #[derive(Debug)]
+            struct StreamHeader {
+                offset_and_size: StreamSize,
+                name: String,
+            }
+
+            let mut stream_header: Vec<StreamHeader> = Vec::with_capacity(number_of_streams as usize);
+
+            for i in 0..number_of_streams {
+                println!("[CLR] decoding stream #{i}");
+                let mut size_buf = [0; size_of::<StreamSize>()];
+                reader.read_exact(&mut size_buf).expect("failed to read stream size");
+
+                let stream_size: StreamSize = StreamSize {
+                    offset_from_metadata_header: u32::from_le_bytes(size_buf[0..4].try_into().unwrap()),
+                    size: u32::from_le_bytes(size_buf[4..8].try_into().unwrap()),
+                };
+
+                println!("    size: {stream_size:?}");
+
+                let mut temporal_buffer = [0; 32];
+
+                let backed_up = reader.seek(SeekFrom::Current(0)).expect("failed to get current position");
+                println!("    current loc: {backed_up:08X}");
+
+                let name = 'find_stream_name: loop {
+                    let mut stream_name = String::with_capacity(32);
+
+                    let actual_read_size = reader.read(&mut temporal_buffer).expect("cannot find Stream name");
+
+                    if let Some((terminated, _)) = temporal_buffer[0..actual_read_size].iter().enumerate().find(|(_, x)| **x == 0) {
+                        let show = &temporal_buffer[0..terminated];
+                        println!("    terminated: {show:?}");
+                        stream_name.extend(
+                            String::from_utf8(show.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name").chars()
+                        );
+
+                        // huh, why did you terminate with weird zero-padding :/
+                        let last_non_zero = backed_up as usize + terminated - 1;
+                        println!("    actual end: {last_non_zero:08X}");
+                        let next = if stream_name.bytes().count() % 4 == 0 {
+                            println!("    Four: !!positive");
+                            last_non_zero + 5
+                        } else {
+                            println!("    Four: negative");
+                            // i.e. last_non_zero is 21, 25 - 1 = 24.
+                            last_non_zero + 4 - (last_non_zero % 4)
+                        };
+
+                        reader.seek(SeekFrom::Start(next as u64)).expect("failed to handle 4-multiple");
+                        println!("    seeked to {next:08X}");
+
+                        break 'find_stream_name stream_name;
+                    } else {
+                        if actual_read_size != 32 {
+                            panic!("unexpected EOF: Stream name is not terminated!")
+                        }
+
+                        stream_name.extend(
+                            String::from_utf8(temporal_buffer.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name").chars()
+                        );
+                    }
+                };
+
+                println!("    stream name: {name}");
+
+                let header = StreamHeader {
+                    offset_and_size: stream_size,
+                    name,
+                };
+
+                stream_header.push(header);
+            }
+
+            struct TableHeader {
+                __reserved: u32,
+                major: u8,
+                minor: u8,
+                // TODO: bit vector, and implies larger offsets
+                heap_offset_sizes: u8,
+                __reserved_2: u8,
+                mask_valid: u64,
+                mask_sorted: u64,
+                row_module: u32,
+                row_type_ref: u32,
+                row_type_def: u32,
+                row_field: u32,
+                row_method_def: u32,
+                row_param: u32,
+                row_interface_impl: u32,
+                row_member_ref: u32,
+                row_constant: u32,
+                row_custom_attribute: u32,
+                row_decl_security: u32,
+                row_class_layout: u32,
+                row_field_layout: u32,
+                row_standalone_sig: u32,
+                row_property_map: u32,
+                row_property: u32,
+                row_method_semantics: u32,
+                row_method_impl: u32,
+                row_type_spec: u32,
+                row_field_rva: u32,
+                row_assembly: u32,
+                row_assembly_ref: u32,
+                row_nested_class: u32,
+                row_generic_param: u32,
+                row_method_spec: u32,
+                row_generic_param_constraint: u32,
+            }
             None
 
             // Some(todo!())
