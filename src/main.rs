@@ -7,13 +7,21 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::mem::{MaybeUninit, size_of_val, transmute};
 use std::num::NonZeroU32;
+use std::path::PathBuf;
+use clap::Parser;
 use crate::cor20::{Cor20Header, MetadataHeader, StreamHeader, StreamSize, SharpTilde, PartialRowCountCollection, PredefinedRowCollection, Module};
 use crate::model::{CoffRawSectionTableEntry, DataDirectory, NtAdditionalRawCoffHeaderField, PortableExecutableFormat, RawCoffField, RawCoffHeader, UsualDataDirectory, RawDosHeader, StandardCoffField, ClrMetadata, ImageDataDirectory};
 
-fn main() {
-    let x = BufReader::new(File::open("/home/kisaragi/.local/share/Steam/steamapps/common/Resonite/Resonite_Data/Managed/MessagePack.dll").expect("shit"));
+#[derive(Parser)]
+struct Decode {
+    path: PathBuf,
+}
 
-    let hi = read_pe_file(x).expect("shit");
+fn main() {
+    let args = Decode::parse();
+    let x = BufReader::new(File::open(args.path).expect("IO error"));
+
+    let hi = read_pe_file(x).expect("failed to decode");
 
     println!("{hi:?}");
 }
@@ -318,7 +326,7 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
                 let st: SharpTilde = unsafe { transmute(buf) };
 
-                println!("    header was decoded: {a:?}");
+                println!("    header was decoded: {st:?}");
 
                 let ctb = st.contained_table_bitmask;
 
