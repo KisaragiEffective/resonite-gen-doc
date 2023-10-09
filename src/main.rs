@@ -6,7 +6,8 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::mem::{MaybeUninit, size_of_val, transmute};
-use crate::cor20::{Cor20Header, MetadataHeader, StreamHeader, StreamSize, RawTableHeader};
+use std::num::NonZeroU32;
+use crate::cor20::{Cor20Header, MetadataHeader, StreamHeader, StreamSize, SharpTilde, PartialRowCountCollection, PredefinedRowCollection, Module};
 use crate::model::{CoffRawSectionTableEntry, DataDirectory, NtAdditionalRawCoffHeaderField, PortableExecutableFormat, RawCoffField, RawCoffHeader, UsualDataDirectory, RawDosHeader, StandardCoffField, ClrMetadata, ImageDataDirectory};
 
 fn main() {
@@ -306,18 +307,99 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
                 stream_header.push(header);
             }
+            println!("decodeing `#~`");
+
+            {
+                const TABLE_HEADER_SIZE: usize = size_of::<SharpTilde>();
+
+                let mut buf = [0; TABLE_HEADER_SIZE];
+
+                reader.read_exact(&mut buf).expect("too short input for CLR table header");
+
+                let st: SharpTilde = unsafe { transmute(buf) };
+
+                println!("    header was decoded: {a:?}");
+
+                let ctb = st.contained_table_bitmask;
+
+                let mut ask_row = |p: PredefinedRowCollection| {
+                    ((ctb & (1 << p.table_id())) != 0).then(|| {
+                        let mut buf = [0u8; 4];
+
+                        (&mut reader).read_exact(&mut buf).expect("fail");
+
+                        u32::from_le_bytes(buf)
+                    }).and_then(NonZeroU32::new)
+                };
+                let partial_col = PartialRowCountCollection {
+                    module: ask_row(PredefinedRowCollection::Module),
+                    type_ref: ask_row(PredefinedRowCollection::TypeRef),
+                    type_def: ask_row(PredefinedRowCollection::TypeDef),
+                    field_ptr: ask_row(PredefinedRowCollection::FieldPtr),
+                    field: ask_row(PredefinedRowCollection::Field),
+                    method_ptr: ask_row(PredefinedRowCollection::MethodPtr),
+                    method_def: ask_row(PredefinedRowCollection::MethodDef),
+                    param_ptr: ask_row(PredefinedRowCollection::ParamPtr),
+                    param: ask_row(PredefinedRowCollection::Param),
+                    interface_impl: ask_row(PredefinedRowCollection::InterfaceImpl),
+                    member_ref: ask_row(PredefinedRowCollection::MemberRef),
+                    constant: ask_row(PredefinedRowCollection::Constant),
+                    custom_attribute: ask_row(PredefinedRowCollection::CustomAttribute),
+                    field_marshal: ask_row(PredefinedRowCollection::FieldMarshal),
+                    decl_security: ask_row(PredefinedRowCollection::DeclSecurity),
+                    class_layout: ask_row(PredefinedRowCollection::ClassLayout),
+                    field_layout: ask_row(PredefinedRowCollection::FieldLayout),
+                    standalone_sig: ask_row(PredefinedRowCollection::StandAloneSig),
+                    event_map: ask_row(PredefinedRowCollection::EventMap),
+                    event_ptr: ask_row(PredefinedRowCollection::EventPtr),
+                    event: ask_row(PredefinedRowCollection::Event),
+                    property_map: ask_row(PredefinedRowCollection::PropertyMap),
+                    property_ptr: ask_row(PredefinedRowCollection::PropertyPtr),
+                    property: ask_row(PredefinedRowCollection::Property),
+                    method_semantics: ask_row(PredefinedRowCollection::MethodSemantics),
+                    method_impl: ask_row(PredefinedRowCollection::MethodImpl),
+                    module_ref: ask_row(PredefinedRowCollection::ModuleRef),
+                    type_spec: ask_row(PredefinedRowCollection::TypeSpec),
+                    impl_map: ask_row(PredefinedRowCollection::ImplMap),
+                    field_rva: ask_row(PredefinedRowCollection::FieldRVA),
+                    enc_log: ask_row(PredefinedRowCollection::EncLog),
+                    enc_ptr: ask_row(PredefinedRowCollection::EncPtr),
+                    assembly: ask_row(PredefinedRowCollection::Assembly),
+                    assembly_processor: ask_row(PredefinedRowCollection::AssemblyProcessor),
+                    assembly_os: ask_row(PredefinedRowCollection::AssemblyOS),
+                    assembly_ref: ask_row(PredefinedRowCollection::AssemblyRef),
+                    assembly_ref_processor: ask_row(PredefinedRowCollection::AssemblyRefProcessor),
+                    assembly_ref_os: ask_row(PredefinedRowCollection::AssemblyRefOs),
+                    file: ask_row(PredefinedRowCollection::File),
+                    exported_type: ask_row(PredefinedRowCollection::ExportedType),
+                    manifest_resource: ask_row(PredefinedRowCollection::ManifestResource),
+                    nested_class: ask_row(PredefinedRowCollection::NestedClass),
+                    generic_param: ask_row(PredefinedRowCollection::GenericParam),
+                    method_spec: ask_row(PredefinedRowCollection::MethodSpec),
+                    generic_param_constraint: ask_row(PredefinedRowCollection::GenericParamConstraint),
+                };
+
+                println!("    partial column was decoded: {partial_col:#08X?}");
+
+                let large_string_heap = st.far_heap_string_address();
+                let large_guid_heap = st.far_heap_guid_address();
+                let large_blob_heap = st.far_heap_blob_address();
+
+                println!("    large: S = {large_string_heap}, G = {large_guid_heap}, B = {large_blob_heap}");
+                let modules: Option<Vec<Module>> = partial_col.module.map(|x| {
+                    let mut vec = Vec::with_capacity(x.get() as usize);
+
+                    for _ in 0..x.get() {
+
+                    }
+                    vec
+                });
+
+                println!("modules: {modules:?}");
+                // TODO: decode continuous tables
+            }
 
             // now we can read Tables header
-
-            const TABLE_HEADER_SIZE: usize = size_of::<RawTableHeader>();
-
-            let mut buf = [0; TABLE_HEADER_SIZE];
-
-            reader.read_exact(&mut buf).expect("too short input for CLR table header");
-
-            let a: RawTableHeader = unsafe { transmute(buf) };
-
-            println!("table was decoded: {a:?}");
 
             None
 
