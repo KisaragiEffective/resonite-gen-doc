@@ -1,10 +1,12 @@
 mod model;
+mod cor20;
 
 use core::mem::size_of;
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::mem::{MaybeUninit, size_of_val, transmute};
+use crate::cor20::{Cor20Header, MetadataHeader, StreamHeader, StreamSize, RawTableHeader};
 use crate::model::{CoffRawSectionTableEntry, DataDirectory, NtAdditionalRawCoffHeaderField, PortableExecutableFormat, RawCoffField, RawCoffHeader, UsualDataDirectory, RawDosHeader, StandardCoffField, ClrMetadata, ImageDataDirectory};
 
 fn main() {
@@ -156,21 +158,6 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
             reader.seek(SeekFrom::Start(cor20_starting_pos as u64)).expect("seek error");
 
             let header = {
-                #[repr(C)]
-                #[derive(Debug)]
-                struct Cor20Header {
-                    __cb: u32,
-                    major_runtime: u16,
-                    minor_runtime: u16,
-                    metadata: ImageDataDirectory,
-                    flags: u32,
-                    entry_point_token_or_rva: u32,
-                    resources: ImageDataDirectory,
-                    strong_name_signature: ImageDataDirectory,
-                    code_manager_table: ImageDataDirectory,
-                    vtable_fixups: ImageDataDirectory,
-                    export_address_table_jumps: ImageDataDirectory,
-                }
 
                 const COR20_HEADER_SIZE: usize = size_of::<Cor20Header>();
 
@@ -208,15 +195,6 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
             // now reader should be on CLI metadata beginning
 
             // TODO: decode CLI metadata and generate documentation
-            struct MetadataHeader {
-                signature: u32,
-                major: u16,
-                minor: u16,
-                __reserved: u32,
-                version: String,
-                flags: u16,
-                number_of_streams: u16,
-            }
 
             let mut pre = [0; 16];
 
@@ -261,19 +239,6 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                 number_of_streams,
             };
 
-            #[repr(C)]
-            #[derive(Debug)]
-            struct StreamSize {
-                offset_from_metadata_header: u32,
-                size: u32,
-            }
-
-            #[derive(Debug)]
-            struct StreamHeader {
-                offset_and_size: StreamSize,
-                name: String,
-            }
-
             let mut stream_header: Vec<StreamHeader> = Vec::with_capacity(number_of_streams as usize);
 
             for i in 0..number_of_streams {
@@ -286,12 +251,12 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                     size: u32::from_le_bytes(size_buf[4..8].try_into().unwrap()),
                 };
 
-                println!("    size: {stream_size:?}");
+                // println!("    size: {stream_size:?}");
 
                 let mut temporal_buffer = [0; 32];
 
                 let backed_up = reader.seek(SeekFrom::Current(0)).expect("failed to get current position");
-                println!("    current loc: {backed_up:08X}");
+                // println!("    current loc: {backed_up:08X}");
 
                 let name = 'find_stream_name: loop {
                     let mut stream_name = String::with_capacity(32);
@@ -300,25 +265,25 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
 
                     if let Some((terminated, _)) = temporal_buffer[0..actual_read_size].iter().enumerate().find(|(_, x)| **x == 0) {
                         let show = &temporal_buffer[0..terminated];
-                        println!("    terminated: {show:?}");
+                        // println!("    terminated: {show:?}");
                         stream_name.extend(
                             String::from_utf8(show.to_vec()).expect("compiler emitted invalid UTF-8 for Stream name").chars()
                         );
 
                         // huh, why did you terminate with weird zero-padding :/
                         let last_non_zero = backed_up as usize + terminated - 1;
-                        println!("    actual end: {last_non_zero:08X}");
+                        // println!("    actual end: {last_non_zero:08X}");
                         let next = if stream_name.bytes().count() % 4 == 0 {
-                            println!("    Four: !!positive");
+                            // println!("    Four: !!positive");
                             last_non_zero + 5
                         } else {
-                            println!("    Four: negative");
+                            // println!("    Four: negative");
                             // i.e. last_non_zero is 21, 25 - 1 = 24.
                             last_non_zero + 4 - (last_non_zero % 4)
                         };
 
                         reader.seek(SeekFrom::Start(next as u64)).expect("failed to handle 4-multiple");
-                        println!("    seeked to {next:08X}");
+                        // println!("    seeked to {next:08X}");
 
                         break 'find_stream_name stream_name;
                     } else {
@@ -342,42 +307,18 @@ fn read_pe_file<R: Read + Seek>(mut reader: R) -> Result<PortableExecutableForma
                 stream_header.push(header);
             }
 
-            struct TableHeader {
-                __reserved: u32,
-                major: u8,
-                minor: u8,
-                // TODO: bit vector, and implies larger offsets
-                heap_offset_sizes: u8,
-                __reserved_2: u8,
-                mask_valid: u64,
-                mask_sorted: u64,
-                row_module: u32,
-                row_type_ref: u32,
-                row_type_def: u32,
-                row_field: u32,
-                row_method_def: u32,
-                row_param: u32,
-                row_interface_impl: u32,
-                row_member_ref: u32,
-                row_constant: u32,
-                row_custom_attribute: u32,
-                row_decl_security: u32,
-                row_class_layout: u32,
-                row_field_layout: u32,
-                row_standalone_sig: u32,
-                row_property_map: u32,
-                row_property: u32,
-                row_method_semantics: u32,
-                row_method_impl: u32,
-                row_type_spec: u32,
-                row_field_rva: u32,
-                row_assembly: u32,
-                row_assembly_ref: u32,
-                row_nested_class: u32,
-                row_generic_param: u32,
-                row_method_spec: u32,
-                row_generic_param_constraint: u32,
-            }
+            // now we can read Tables header
+
+            const TABLE_HEADER_SIZE: usize = size_of::<RawTableHeader>();
+
+            let mut buf = [0; TABLE_HEADER_SIZE];
+
+            reader.read_exact(&mut buf).expect("too short input for CLR table header");
+
+            let a: RawTableHeader = unsafe { transmute(buf) };
+
+            println!("table was decoded: {a:?}");
+
             None
 
             // Some(todo!())
